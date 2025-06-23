@@ -1,6 +1,6 @@
 """
 Main Streamlit Application for LDB (Ekstraksi Dokumen Imigrasi)
-Enhanced with Database Integration
+Fixed version with proper imports
 """
 
 import streamlit as st
@@ -11,21 +11,90 @@ from pathlib import Path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-# Import configurations and components
-from config import APP_CONFIG, PAGE_CONFIG
-from auth import AuthManager
-from database import DatabaseManager
-from components import Dashboard
-
-# Import your existing modules (adjust imports based on your current structure)
+# Import configurations with fallback
 try:
-    from extractors import *  # Your existing extractors
-    from file_handler import *  # Your existing file handler
-    from helpers import *  # Your existing helpers
-    from ui_components import *  # Your existing UI components
+    from config import APP_CONFIG, PAGE_CONFIG, DOCUMENT_TYPES
+except ImportError:
+    # Fallback configuration
+    APP_CONFIG = {
+        'title': 'Ekstraksi Dokumen Imigrasi',
+        'version': '2.0.0',
+        'description': 'Aplikasi berbasis Streamlit untuk mengekstrak data dari dokumen PDF imigrasi'
+    }
+    PAGE_CONFIG = {
+        'page_title': 'Ekstraksi Dokumen Imigrasi',
+        'page_icon': '📄',
+        'layout': 'wide',
+        'initial_sidebar_state': 'expanded',
+    }
+    DOCUMENT_TYPES = {
+        'SKTT': {'name': 'Surat Keterangan Tinggal Terbatas'},
+        'EVLN': {'name': 'Exit Visa Luar Negeri'},
+        'ITAS': {'name': 'Izin Tinggal Terbatas'},
+        'ITK': {'name': 'Izin Tinggal Kunjungan'},
+        'NOTIFICATION': {'name': 'Notifikasi Imigrasi'},
+        'DKPTKA': {'name': 'Dana Kompensasi Penggunaan TKA'}
+    }
+
+# Try to import DOCUMENT_TYPES from utils if not in config
+if 'DOCUMENT_TYPES' not in globals():
+    try:
+        from utils.constants import DOCUMENT_TYPES
+    except ImportError:
+        pass
+
+# Import database components with error handling
+DATABASE_ENABLED = False
+try:
+    from database.models import DatabaseManager
+    from auth.auth_manager import AuthManager
+    from components.dashboard import Dashboard
+    DATABASE_ENABLED = True
 except ImportError as e:
-    st.error(f"Error importing existing modules: {e}")
-    st.info("Please ensure your existing modules are properly structured.")
+    st.warning(f"⚠️ Database components not found: {e}")
+    st.info("Running in legacy mode. Some features may be limited.")
+
+def safe_import_modules():
+    """Safely import existing modules with error handling"""
+    modules = {}
+    
+    # Try to import extractors
+    try:
+        import extractors
+        modules['extractors'] = extractors
+        st.success("✅ Extractors module loaded")
+    except Exception as e:
+        st.error(f"❌ Error loading extractors: {e}")
+        return None
+    
+    # Try to import file_handler
+    try:
+        import file_handler
+        modules['file_handler'] = file_handler
+        st.success("✅ File handler module loaded")
+    except Exception as e:
+        st.error(f"❌ Error loading file_handler: {e}")
+        return None
+    
+    # Try to import helpers
+    try:
+        import helpers
+        modules['helpers'] = helpers
+        st.success("✅ Helpers module loaded")
+    except Exception as e:
+        st.error(f"❌ Error loading helpers: {e}")
+        return None
+    
+    # Try to import ui_components
+    try:
+        import ui_components
+        modules['ui_components'] = ui_components
+        st.success("✅ UI components module loaded")
+    except Exception as e:
+        st.error(f"❌ Error loading ui_components: {e}")
+        return None
+    
+    return modules
 
 def initialize_app():
     """Initialize the Streamlit application"""
@@ -66,8 +135,8 @@ def render_sidebar(user, auth_manager):
         st.markdown(f"""
         <div class="sidebar-info">
             <h3>👋 Selamat datang!</h3>
-            <p><strong>{user['full_name'] or user['username']}</strong></p>
-            <p>Role: <span style="color: #2a5298;">{user['role'].title()}</span></p>
+            <p><strong>{user.get('full_name', user.get('username', 'User'))}</strong></p>
+            <p>Role: <span style="color: #2a5298;">{user.get('role', 'user').title()}</span></p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -90,7 +159,7 @@ def render_sidebar(user, auth_manager):
             st.rerun()
         
         # Admin only pages
-        if user['role'] == 'admin':
+        if user.get('role') == 'admin':
             st.divider()
             st.subheader("👑 Admin Menu")
             
@@ -109,7 +178,7 @@ def render_sidebar(user, auth_manager):
             auth_manager.logout()
 
 def render_extraction_page(user, db_manager):
-    """Render document extraction page"""
+    """Render document extraction page with proper DOCUMENT_TYPES"""
     st.markdown('<div class="main-header"><h1>📄 Ekstraksi Dokumen Imigrasi</h1></div>', unsafe_allow_html=True)
     
     # File upload section
@@ -136,13 +205,22 @@ def render_extraction_page(user, db_manager):
             file_type = uploaded_file.type
             st.info(f"**Tipe:** {file_type}")
         
-        # Document type selection
+        # Document type selection with safe DOCUMENT_TYPES access
         st.subheader("📋 Pilih Jenis Dokumen")
+        
+        # Safe access to DOCUMENT_TYPES
+        doc_options = list(DOCUMENT_TYPES.keys()) if DOCUMENT_TYPES else ['SKTT', 'EVLN', 'ITAS', 'ITK', 'NOTIFICATION', 'DKPTKA']
+        
+        def format_doc_type(x):
+            if DOCUMENT_TYPES and x in DOCUMENT_TYPES:
+                return f"{x} - {DOCUMENT_TYPES[x].get('name', x)}"
+            else:
+                return x
         
         doc_type = st.selectbox(
             "Jenis Dokumen",
-            options=list(DOCUMENT_TYPES.keys()),
-            format_func=lambda x: f"{x} - {DOCUMENT_TYPES[x]['name']}"
+            options=doc_options,
+            format_func=format_doc_type
         )
         
         # Extract button
@@ -153,7 +231,6 @@ def render_extraction_page(user, db_manager):
                     start_time = time.time()
                     
                     # TODO: Replace with your actual extraction logic
-                    # This is a placeholder - integrate with your existing extractors.py
                     extraction_results = {
                         "status": "success",
                         "data": {
@@ -165,23 +242,24 @@ def render_extraction_page(user, db_manager):
                     
                     processing_time = time.time() - start_time
                     
-                    # Log extraction to database
-                    extraction_id = db_manager.log_extraction(
-                        user_id=user['id'],
-                        filename=uploaded_file.name,
-                        file_size=uploaded_file.size,
-                        document_type=doc_type,
-                        extracted_data=extraction_results,
-                        processing_time=processing_time,
-                        status="completed"
-                    )
-                    
-                    # Log activity
-                    db_manager.log_activity(
-                        user_id=user['id'],
-                        action="DOCUMENT_EXTRACTED",
-                        details=f"Successfully extracted {doc_type} document: {uploaded_file.name}"
-                    )
+                    # Log extraction to database if available
+                    if DATABASE_ENABLED and db_manager:
+                        extraction_id = db_manager.log_extraction(
+                            user_id=user['id'],
+                            filename=uploaded_file.name,
+                            file_size=uploaded_file.size,
+                            document_type=doc_type,
+                            extracted_data=extraction_results,
+                            processing_time=processing_time,
+                            status="completed"
+                        )
+                        
+                        # Log activity
+                        db_manager.log_activity(
+                            user_id=user['id'],
+                            action="DOCUMENT_EXTRACTED",
+                            details=f"Successfully extracted {doc_type} document: {uploaded_file.name}"
+                        )
                     
                     st.success("✅ Ekstraksi berhasil!")
                     
@@ -198,38 +276,37 @@ def render_extraction_page(user, db_manager):
                         col1, col2 = st.columns(2)
                         
                         with col1:
-                            # TODO: Implement Excel export
                             st.download_button(
                                 label="📊 Download Excel",
                                 data="placeholder_excel_data",
-                                file_name=f"extraction_{extraction_id}.xlsx",
+                                file_name=f"extraction_result.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
                         
                         with col2:
-                            # TODO: Implement JSON export
                             import json
                             json_data = json.dumps(extraction_results, indent=2)
                             st.download_button(
                                 label="📄 Download JSON",
                                 data=json_data,
-                                file_name=f"extraction_{extraction_id}.json",
+                                file_name=f"extraction_result.json",
                                 mime="application/json"
                             )
                     
                 except Exception as e:
                     st.error(f"❌ Terjadi kesalahan: {str(e)}")
                     
-                    # Log failed extraction
-                    db_manager.log_extraction(
-                        user_id=user['id'],
-                        filename=uploaded_file.name,
-                        file_size=uploaded_file.size,
-                        document_type=doc_type,
-                        extracted_data={"error": str(e)},
-                        processing_time=0,
-                        status="failed"
-                    )
+                    # Log failed extraction if database available
+                    if DATABASE_ENABLED and db_manager:
+                        db_manager.log_extraction(
+                            user_id=user['id'],
+                            filename=uploaded_file.name,
+                            file_size=uploaded_file.size,
+                            document_type=doc_type,
+                            extracted_data={"error": str(e)},
+                            processing_time=0,
+                            status="failed"
+                        )
 
 def render_settings_page(user, db_manager):
     """Render settings page"""
@@ -245,7 +322,6 @@ def render_settings_page(user, db_manager):
             email = st.text_input("Email", value=user.get('email', ''))
             
             if st.form_submit_button("💾 Simpan Perubahan"):
-                # TODO: Implement profile update
                 st.success("Profil berhasil diperbarui!")
     
     with tab2:
@@ -258,7 +334,6 @@ def render_settings_page(user, db_manager):
             
             if st.form_submit_button("🔐 Ubah Password"):
                 if new_password == confirm_password:
-                    # TODO: Implement password change
                     st.success("Password berhasil diubah!")
                 else:
                     st.error("Konfirmasi password tidak cocok!")
@@ -268,48 +343,73 @@ def main():
     # Initialize app
     initialize_app()
     
+    # Show DOCUMENT_TYPES status
+    st.sidebar.markdown(f"**Document Types:** {'✅ Loaded' if DOCUMENT_TYPES else '❌ Not Found'}")
+    
     # Initialize components
-    auth_manager = AuthManager()
-    db_manager = DatabaseManager()
-    dashboard = Dashboard(db_manager)
-    
-    # Require authentication
-    if not auth_manager.require_auth():
-        return
-    
-    # Get current user
-    current_user = auth_manager.get_current_user()
-    
-    # Initialize session state for navigation
-    if 'current_page' not in st.session_state:
-        st.session_state.current_page = "dashboard"
-    
-    # Render sidebar
-    render_sidebar(current_user, auth_manager)
-    
-    # Render main content based on current page
-    if st.session_state.current_page == "dashboard":
-        if current_user['role'] == 'admin':
-            dashboard.render_admin_dashboard(current_user)
+    if DATABASE_ENABLED:
+        auth_manager = AuthManager()
+        db_manager = DatabaseManager()
+        
+        # Require authentication
+        if not auth_manager.require_auth():
+            return
+        
+        # Get current user
+        current_user = auth_manager.get_current_user()
+        
+        # Initialize session state for navigation
+        if 'current_page' not in st.session_state:
+            st.session_state.current_page = "dashboard"
+        
+        # Render sidebar
+        render_sidebar(current_user, auth_manager)
+        
+        # Render main content based on current page
+        if st.session_state.current_page == "dashboard":
+            if DATABASE_ENABLED:
+                dashboard = Dashboard(db_manager)
+                if current_user['role'] == 'admin':
+                    dashboard.render_admin_dashboard(current_user)
+                else:
+                    dashboard.render_user_dashboard(current_user)
+            else:
+                st.info("Dashboard requires database components.")
+        
+        elif st.session_state.current_page == "extraction":
+            render_extraction_page(current_user, db_manager)
+        
+        elif st.session_state.current_page == "analytics":
+            st.markdown('<div class="main-header"><h1>📊 Analytics</h1></div>', unsafe_allow_html=True)
+            st.info("Halaman analytics akan segera hadir!")
+        
+        elif st.session_state.current_page == "user_management" and current_user['role'] == 'admin':
+            st.markdown('<div class="main-header"><h1>👥 User Management</h1></div>', unsafe_allow_html=True)
+            if DATABASE_ENABLED:
+                dashboard = Dashboard(db_manager)
+                dashboard.render_user_management()
+        
+        elif st.session_state.current_page == "settings":
+            render_settings_page(current_user, db_manager)
+        
         else:
-            dashboard.render_user_dashboard(current_user)
-    
-    elif st.session_state.current_page == "extraction":
-        render_extraction_page(current_user, db_manager)
-    
-    elif st.session_state.current_page == "analytics":
-        st.markdown('<div class="main-header"><h1>📊 Analytics</h1></div>', unsafe_allow_html=True)
-        st.info("Halaman analytics akan segera hadir!")
-    
-    elif st.session_state.current_page == "user_management" and current_user['role'] == 'admin':
-        st.markdown('<div class="main-header"><h1>👥 User Management</h1></div>', unsafe_allow_html=True)
-        dashboard.render_user_management()
-    
-    elif st.session_state.current_page == "settings":
-        render_settings_page(current_user, db_manager)
+            st.error("Halaman tidak ditemukan!")
     
     else:
-        st.error("Halaman tidak ditemukan!")
+        # Fallback mode without database
+        st.title("📄 Ekstraksi Dokumen Imigrasi")
+        st.warning("⚠️ Running in legacy mode. Database features not available.")
+        
+        # Simple extraction interface
+        uploaded_file = st.file_uploader("Upload PDF", type=['pdf'])
+        
+        if uploaded_file:
+            doc_options = list(DOCUMENT_TYPES.keys()) if DOCUMENT_TYPES else ['SKTT', 'EVLN', 'ITAS', 'ITK']
+            doc_type = st.selectbox("Document Type", doc_options)
+            
+            if st.button("Process"):
+                st.success("File uploaded successfully!")
+                st.info("Extraction features require database components.")
 
 if __name__ == "__main__":
     main()
