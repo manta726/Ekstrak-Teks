@@ -1,6 +1,6 @@
 """
 Main Streamlit Application for LDB (Ekstraksi Dokumen Imigrasi)
-Complete version with Clear All Files functionality
+Complete version with Clear All Files functionality - FIXED VERSION
 """
 
 import streamlit as st
@@ -69,6 +69,14 @@ def initialize_app():
     # Initialize session state for file management
     if 'file_uploader_key' not in st.session_state:
         st.session_state.file_uploader_key = 0
+    
+    # Initialize session state for storing extraction results
+    if 'extraction_results' not in st.session_state:
+        st.session_state.extraction_results = None
+    
+    # Initialize session state for showing results
+    if 'show_results' not in st.session_state:
+        st.session_state.show_results = False
     
     # Custom CSS
     st.markdown("""
@@ -173,7 +181,9 @@ def initialize_app():
 def clear_uploaded_files():
     """Clear all uploaded files by incrementing the file uploader key"""
     st.session_state.file_uploader_key += 1
-    st.rerun()
+    st.session_state.extraction_results = None
+    st.session_state.show_results = False
+    # Removed st.rerun() to prevent auto-refresh
 
 def render_sidebar(user, auth_manager):
     """Render sidebar with user info and navigation"""
@@ -229,7 +239,7 @@ def render_sidebar(user, auth_manager):
             auth_manager.logout()
 
 def render_extraction_page(user, db_manager):
-    """Render document extraction page with Clear All Files functionality"""
+    """Render document extraction page with persistent results"""
     st.markdown('<div class="main-header"><h1>📄 Ekstraksi Dokumen Imigrasi</h1></div>', unsafe_allow_html=True)
     
     if not FILE_HANDLER_ENABLED:
@@ -248,7 +258,150 @@ def render_extraction_page(user, db_manager):
         key=f"file_uploader_{st.session_state.file_uploader_key}"
     )
     
-    if uploaded_files:
+    # Display extraction results if available
+    if st.session_state.show_results and st.session_state.extraction_results:
+        results = st.session_state.extraction_results
+        
+        # Display success header
+        st.markdown("""
+        <div class="success-header">
+            <div class="success-icon">✓</div>
+            <h2 style="margin: 0;">Proses Berhasil</h2>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Create tabs for results
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Extraction Result", "📄 Excel File", "📁 File Rename", "🔄 New Process"])
+        
+        with tab1:
+            st.subheader("Extraction Result Data")
+            
+            df = results['df']
+            doc_type = results['doc_type']
+            valid_files_count = results['valid_files_count']
+            processing_time = results['processing_time']
+            
+            # Display table with proper column configuration
+            if doc_type == "SKTT":
+                columns_to_show = ['NIK', 'Name', 'Jenis Kelamin', 'Place of Birth', 'Date of Birth', 'Nationality', 'Occupation', 'Address']
+            elif doc_type == "EVLN":
+                columns_to_show = ['Name', 'Place of Birth', 'Date of Birth', 'Passport No', 'Passport Expiry', 'Date Issue']
+            elif doc_type in ["ITAS", "ITK"]:
+                columns_to_show = ['Name', 'Permit Number', 'Stay Permit Expiry', 'Passport Number', 'Nationality', 'Gender']
+            elif doc_type == "Notifikasi":
+                columns_to_show = ['Nomor Keputusan', 'Nama TKA', 'Tempat/Tanggal Lahir', 'Kewarganegaraan', 'Nomor Paspor', 'Jabatan']
+            elif doc_type == "DKPTKA":
+                columns_to_show = ['Nama Pemberi Kerja', 'Nama TKA', 'Nomor Paspor', 'Kewarganegaraan', 'Jabatan', 'DKPTKA']
+            else:
+                columns_to_show = [col for col in df.columns if col not in ['filename', 'Jenis Dokumen', 'Error']]
+            
+            # Filter DataFrame to show only relevant columns
+            display_df = df.copy()
+            available_columns = [col for col in columns_to_show if col in display_df.columns]
+            if available_columns:
+                display_df = display_df[available_columns]
+            
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Show statistics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("Total Files", valid_files_count)
+            
+            with col2:
+                successful = len([row for _, row in df.iterrows() if "Error" not in row.to_dict()])
+                st.metric("Berhasil", successful)
+            
+            with col3:
+                failed = len([row for _, row in df.iterrows() if "Error" in row.to_dict()])
+                st.metric("Gagal", failed)
+            
+            with col4:
+                st.metric("Waktu Proses", f"{processing_time:.2f}s")
+        
+        with tab2:
+            st.subheader("Download File Excel")
+            
+            excel_data = results['excel_data']
+            
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.markdown(f"""
+                <div style="background-color: #f8fafc; border-radius: 0.5rem; padding: 1rem; display: flex; align-items: center;">
+                    <div style="background-color: #22c55e; border-radius: 0.5rem; padding: 0.75rem; margin-right: 1rem;">
+                        <span style="color: white; font-size: 1.5rem;">📊</span>
+                    </div>
+                    <div>
+                        <p style="margin: 0; font-weight: 600;">Hasil_Ekstraksi_{doc_type}.xlsx</p>
+                        <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Excel Spreadsheet • {valid_files_count} files • Diekspor pada {results['export_time']}</p>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.download_button(
+                    label="📊 Download Excel",
+                    data=excel_data,
+                    file_name=f"Hasil_Ekstraksi_{doc_type}_{int(time.time())}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+        
+        with tab3:
+            st.subheader("File yang Telah di-Rename")
+            
+            renamed_files = results['renamed_files']
+            
+            # Display rename information
+            st.markdown('<div style="background-color: #f8fafc; border-radius: 0.5rem; padding: 1rem;">', unsafe_allow_html=True)
+            
+            for original_name, file_info in renamed_files.items():
+                st.markdown(f'''
+                <div style="display: flex; align-items: center; padding: 0.75rem; border-bottom: 1px solid #e2e8f0;">
+                    <div style="flex: 1;">
+                        <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Nama Asli:</p>
+                        <p style="margin: 0; font-weight: 600;">{original_name}</p>
+                    </div>
+                    <div style="margin: 0 1rem;">
+                        <span style="color: #64748b;">→</span>
+                    </div>
+                    <div style="flex: 1;">
+                        <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Nama Baru:</p>
+                        <p style="margin: 0; font-weight: 600; color: #0369a1;">{file_info['new_name']}</p>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Download ZIP button
+            zip_data = results['zip_data']
+            
+            st.download_button(
+                label="📁 Download All Renamed Files (ZIP)",
+                data=zip_data,
+                file_name=f"Renamed_{doc_type}_Files_{int(time.time())}.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
+        
+        with tab4:
+            st.subheader("🔄 Proses Dokumen Baru")
+            st.info("Untuk memproses dokumen baru, silakan klik tombol 'Clear All Files' di bawah ini.")
+            
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col2:
+                if st.button("🗑️ Clear All Files", type="secondary", use_container_width=True, key="clear_results_btn"):
+                    clear_uploaded_files()
+                    st.rerun()
+    
+    elif uploaded_files:
         # Validate files
         valid_files = []
         invalid_files = []
@@ -288,6 +441,7 @@ def render_extraction_page(user, db_manager):
         with col2:
             if st.button("🗑️ Clear All Files", type="secondary", use_container_width=True, key="clear_all_files_btn"):
                 clear_uploaded_files()
+                st.rerun()
         
         st.markdown("---")
         
@@ -350,138 +504,31 @@ def render_extraction_page(user, db_manager):
                             details=f"Extracted {len(valid_files)} {doc_type} documents using file_handler"
                         )
                     
-                    # Display success header
-                    st.markdown("""
-                    <div class="success-header">
-                        <div class="success-icon">✓</div>
-                        <h2 style="margin: 0;">Proses Berhasil</h2>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    # Store results in session state instead of auto-clearing
+                    with open(excel_path, "rb") as f:
+                        excel_data = f.read()
                     
-                    # Create tabs for results
-                    tab1, tab2, tab3 = st.tabs(["📊 Extraction Result", "📄 Excel File", "📁 File Rename"])
+                    with open(zip_path, "rb") as f:
+                        zip_data = f.read()
                     
-                    with tab1:
-                        st.subheader("Extraction Result Data")
-                        
-                        # Display table with proper column configuration
-                        if doc_type == "SKTT":
-                            columns_to_show = ['NIK', 'Name', 'Jenis Kelamin', 'Place of Birth', 'Date of Birth', 'Nationality', 'Occupation', 'Address']
-                        elif doc_type == "EVLN":
-                            columns_to_show = ['Name', 'Place of Birth', 'Date of Birth', 'Passport No', 'Passport Expiry', 'Date Issue']
-                        elif doc_type in ["ITAS", "ITK"]:
-                            columns_to_show = ['Name', 'Permit Number', 'Stay Permit Expiry', 'Passport Number', 'Nationality', 'Gender']
-                        elif doc_type == "Notifikasi":
-                            columns_to_show = ['Nomor Keputusan', 'Nama TKA', 'Tempat/Tanggal Lahir', 'Kewarganegaraan', 'Nomor Paspor', 'Jabatan']
-                        elif doc_type == "DKPTKA":
-                            columns_to_show = ['Nama Pemberi Kerja', 'Nama TKA', 'Nomor Paspor', 'Kewarganegaraan', 'Jabatan', 'DKPTKA']
-                        else:
-                            columns_to_show = [col for col in df.columns if col not in ['filename', 'Jenis Dokumen', 'Error']]
-                        
-                        # Filter DataFrame to show only relevant columns
-                        display_df = df.copy()
-                        available_columns = [col for col in columns_to_show if col in display_df.columns]
-                        if available_columns:
-                            display_df = display_df[available_columns]
-                        
-                        st.dataframe(
-                            display_df,
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        
-                        # Show statistics
-                        col1, col2, col3, col4 = st.columns(4)
-                        
-                        with col1:
-                            st.metric("Total Files", len(valid_files))
-                        
-                        with col2:
-                            successful = len([row for _, row in df.iterrows() if "Error" not in row.to_dict()])
-                            st.metric("Berhasil", successful)
-                        
-                        with col3:
-                            failed = len([row for _, row in df.iterrows() if "Error" in row.to_dict()])
-                            st.metric("Gagal", failed)
-                        
-                        with col4:
-                            st.metric("Waktu Proses", f"{processing_time:.2f}s")
-                    
-                    with tab2:
-                        st.subheader("Download File Excel")
-                        
-                        # Read Excel file
-                        with open(excel_path, "rb") as f:
-                            excel_data = f.read()
-                        
-                        col1, col2 = st.columns([3, 1])
-                        
-                        with col1:
-                            st.markdown(f"""
-                            <div style="background-color: #f8fafc; border-radius: 0.5rem; padding: 1rem; display: flex; align-items: center;">
-                                <div style="background-color: #22c55e; border-radius: 0.5rem; padding: 0.75rem; margin-right: 1rem;">
-                                    <span style="color: white; font-size: 1.5rem;">📊</span>
-                                </div>
-                                <div>
-                                    <p style="margin: 0; font-weight: 600;">Hasil_Ekstraksi_{doc_type}.xlsx</p>
-                                    <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Excel Spreadsheet • {len(valid_files)} files • Diekspor pada {time.strftime('%d/%m/%Y %H:%M')}</p>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        with col2:
-                            st.download_button(
-                                label="📊 Download Excel",
-                                data=excel_data,
-                                file_name=f"Hasil_Ekstraksi_{doc_type}_{int(time.time())}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
-                    
-                    with tab3:
-                        st.subheader("File yang Telah di-Rename")
-                        
-                        # Display rename information
-                        st.markdown('<div style="background-color: #f8fafc; border-radius: 0.5rem; padding: 1rem;">', unsafe_allow_html=True)
-                        
-                        for original_name, file_info in renamed_files.items():
-                            st.markdown(f'''
-                            <div style="display: flex; align-items: center; padding: 0.75rem; border-bottom: 1px solid #e2e8f0;">
-                                <div style="flex: 1;">
-                                    <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Nama Asli:</p>
-                                    <p style="margin: 0; font-weight: 600;">{original_name}</p>
-                                </div>
-                                <div style="margin: 0 1rem;">
-                                    <span style="color: #64748b;">→</span>
-                                </div>
-                                <div style="flex: 1;">
-                                    <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Nama Baru:</p>
-                                    <p style="margin: 0; font-weight: 600; color: #0369a1;">{file_info['new_name']}</p>
-                                </div>
-                            </div>
-                            ''', unsafe_allow_html=True)
-                        
-                        st.markdown('</div>', unsafe_allow_html=True)
-                        
-                        # Download ZIP button
-                        with open(zip_path, "rb") as f:
-                            zip_data = f.read()
-                        
-                        st.download_button(
-                            label="📁 Download All Renamed Files (ZIP)",
-                            data=zip_data,
-                            file_name=f"Renamed_{doc_type}_Files_{int(time.time())}.zip",
-                            mime="application/zip",
-                            use_container_width=True
-                        )
+                    st.session_state.extraction_results = {
+                        'df': df,
+                        'doc_type': doc_type,
+                        'valid_files_count': len(valid_files),
+                        'processing_time': processing_time,
+                        'excel_data': excel_data,
+                        'zip_data': zip_data,
+                        'renamed_files': renamed_files,
+                        'export_time': time.strftime('%d/%m/%Y %H:%M')
+                    }
+                    st.session_state.show_results = True
                     
                     # Clean up temporary files
                     cleanup_temp_directory(temp_dir)
                     
-                    # Auto-clear files after successful processing
-                    st.success("✅ Proses selesai! File akan dibersihkan otomatis dalam 3 detik...")
-                    time.sleep(3)
-                    clear_uploaded_files()
+                    # Success message without auto-refresh
+                    st.success("✅ Proses selesai! Lihat hasil di bawah ini.")
+                    st.rerun()  # Only rerun to show results, not to clear
                     
                 except Exception as e:
                     st.error(f"❌ Terjadi kesalahan: {str(e)}")
@@ -618,6 +665,7 @@ def main():
                 # Clear button for fallback mode
                 if st.button("🗑️ Clear Files"):
                     clear_uploaded_files()
+                    st.rerun()
                 
                 doc_options = list(DOCUMENT_TYPES.keys()) if DOCUMENT_TYPES else ['SKTT', 'EVLN', 'ITAS', 'ITK']
                 doc_type = st.selectbox("Document Type", doc_options)
