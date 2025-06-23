@@ -6,6 +6,7 @@ Fixed version with proper imports
 import streamlit as st
 import sys
 from pathlib import Path
+import io # Added import
 
 # Add project root to Python path
 project_root = Path(__file__).parent
@@ -230,15 +231,33 @@ def render_extraction_page(user, db_manager):
                     import time
                     start_time = time.time()
                     
-                    # TODO: Replace with your actual extraction logic
-                    extraction_results = {
-                        "status": "success",
-                        "data": {
-                            "nama": "John Doe",
-                            "nomor_paspor": "A1234567",
-                            "kebangsaan": "Indonesia"
+                    # ACTUAL EXTRACTION LOGIC - Replace dummy data
+                    # Extract text from PDF
+                    import pdfplumber
+                    
+                    # Read PDF content
+                    pdf_text = ""
+                    with pdfplumber.open(uploaded_file) as pdf:
+                        for page in pdf.pages:
+                            pdf_text += page.extract_text() or ""
+                    
+                    # Call the appropriate extraction function
+                    from extractors import extract_document_data
+                    
+                    extraction_results = extract_document_data(pdf_text, doc_type)
+                    
+                    # Format results for display
+                    if "Error" not in extraction_results:
+                        formatted_results = {
+                            "status": "success",
+                            "data": extraction_results
                         }
-                    }
+                    else:
+                        formatted_results = {
+                            "status": "error",
+                            "error": extraction_results.get("Error", "Unknown error"),
+                            "data": extraction_results
+                        }
                     
                     processing_time = time.time() - start_time
                     
@@ -262,13 +281,15 @@ def render_extraction_page(user, db_manager):
                         )
                     
                     st.success("✅ Ekstraksi berhasil!")
-                    
+
                     # Display results
                     st.subheader("📊 Hasil Ekstraksi")
-                    
-                    if extraction_results["status"] == "success":
-                        for key, value in extraction_results["data"].items():
-                            st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+
+                    if formatted_results["status"] == "success":
+                        # Display all extracted fields
+                        for key, value in formatted_results["data"].items():
+                            if value is not None and key != "Jenis Dokumen":
+                                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
                         
                         # Download options
                         st.subheader("💾 Download Hasil")
@@ -276,22 +297,37 @@ def render_extraction_page(user, db_manager):
                         col1, col2 = st.columns(2)
                         
                         with col1:
+                            # Create Excel data
+                            import pandas as pd
+                            df = pd.DataFrame([formatted_results["data"]])
+                            excel_buffer = io.BytesIO()
+                            df.to_excel(excel_buffer, index=False)
+                            excel_data = excel_buffer.getvalue()
+                            
                             st.download_button(
                                 label="📊 Download Excel",
-                                data="placeholder_excel_data",
-                                file_name=f"extraction_result.xlsx",
+                                data=excel_data,
+                                file_name=f"extraction_{doc_type}_{int(time.time())}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
                         
                         with col2:
                             import json
-                            json_data = json.dumps(extraction_results, indent=2)
+                            json_data = json.dumps(formatted_results, indent=2, ensure_ascii=False)
                             st.download_button(
                                 label="📄 Download JSON",
                                 data=json_data,
-                                file_name=f"extraction_result.json",
+                                file_name=f"extraction_{doc_type}_{int(time.time())}.json",
                                 mime="application/json"
                             )
+                    else:
+                        st.error(f"❌ Ekstraksi gagal: {formatted_results.get('error', 'Unknown error')}")
+                        # Still show partial data if available
+                        if formatted_results.get("data"):
+                            st.subheader("📊 Data Parsial")
+                            for key, value in formatted_results["data"].items():
+                                if value is not None:
+                                    st.write(f"**{key}:** {value}")
                     
                 except Exception as e:
                     st.error(f"❌ Terjadi kesalahan: {str(e)}")
