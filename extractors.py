@@ -368,6 +368,7 @@ def extract_notifikasi(text):
 def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
     """
     Ekstraksi informasi DKPTKA yang diperbaiki dengan akurasi tinggi
+    Menangani format tabel dan format berlabel
     """
     
     def safe_extract(pattern: str, text: str, group: int = 1, flags: int = re.IGNORECASE) -> Optional[str]:
@@ -376,7 +377,6 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
             match = re.search(pattern, text, flags)
             if match:
                 result = match.group(group).strip()
-                # Clean up extra whitespace
                 result = re.sub(r'\s+', ' ', result)
                 return result if result else None
             return None
@@ -387,147 +387,229 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
         """Membersihkan teks dari karakter tidak perlu"""
         if not text:
             return None
-        # Remove extra whitespace, newlines, and special characters
         cleaned = re.sub(r'\s+', ' ', text.strip())
         cleaned = re.sub(r'["\'\n\r\t]+', ' ', cleaned).strip()
         return cleaned if cleaned else None
 
+    def extract_from_table_format(text: str) -> Dict[str, Optional[str]]:
+        """Ekstraksi khusus untuk format tabel seperti contoh yang diberikan"""
+        result = {}
+        lines = text.split('\n')
+        
+        for line in lines:
+            # Cek apakah baris mengandung data tabular
+            if '\t' in line or (len(line.split()) >= 4 and any(keyword in line.upper() for keyword in ['CHINA', 'INDONESIA', 'ENGINEER', 'MANAGER', 'US$', 'USD', 'PT', 'CV'])):
+                # Split by tab atau multiple spaces
+                parts = line.split('\t') if '\t' in line else re.split(r'\s{2,}', line.strip())
+                
+                if len(parts) >= 4:
+                    for j, part in enumerate(parts):
+                        part = part.strip()
+                        if not part:
+                            continue
+                        
+                        # Company name (biasanya pertama, mengandung PT, CV, dll)
+                        if j == 0 and any(keyword in part.upper() for keyword in ['PT', 'CV', 'COMPANY', 'CORP', 'LTD', 'INDUSTRY', 'NICKEL', 'STEEL', 'MINING']):
+                            result["Nama Pemberi Kerja"] = clean_extracted_text(part)
+                        
+                        # Person name (biasanya kedua, huruf kapital semua)
+                        elif j == 1 and re.match(r'^[A-Z\s]+$', part) and len(part.split()) >= 2:
+                            result["Nama TKA"] = clean_extracted_text(part)
+                        
+                        # Passport number (alphanumeric, 6-12 karakter)
+                        elif re.match(r'^[A-Z0-9]{6,12}$', part):
+                            result["Nomor Paspor"] = part
+                        
+                        # Nationality (nama negara)
+                        elif any(country in part.upper() for country in [
+                            'CHINA', 'REPUBLIK RAKYAT CHINA', 'INDONESIA', 'MALAYSIA', 
+                            'SINGAPORE', 'THAILAND', 'VIETNAM', 'PHILIPPINES', 'INDIA', 
+                            'BANGLADESH', 'MYANMAR', 'KOREA', 'JAPAN'
+                        ]):
+                            result["Kewarganegaraan"] = clean_extracted_text(part)
+                        
+                        # Position/Job title
+                        elif any(job in part.upper() for job in [
+                            'ENGINEER', 'MANAGER', 'SUPERVISOR', 'DIRECTOR', 'TECHNICIAN', 
+                            'OPERATOR', 'SPECIALIST', 'COORDINATOR', 'ASSISTANT', 'MECHANICAL',
+                            'ELECTRICAL', 'CIVIL', 'CHEMICAL', 'INDUSTRIAL'
+                        ]):
+                            result["Jabatan"] = clean_extracted_text(part)
+                        
+                        # Amount (mengandung US$ atau USD)
+                        elif any(currency in part.upper() for currency in ['US$', 'USD', '$']) and re.search(r'\d', part):
+                            result["DKPTKA"] = clean_extracted_text(part)
+        
+        return result
+
+    def extract_billing_code_advanced(text: str) -> Optional[str]:
+        """Advanced billing code extraction"""
+        patterns = [
+            r'(?:Kode\s+Billing|Billing\s+Code|Code\s+Billing)[^\d]*(\d{12,})',
+            r'(?:pembayaran\s+DKPTKA)[^\d]*(\d{12,})',
+            r'(?:kode\s+pembayaran)[^\d]*(\d{12,})',
+            r'(\d{15,})',  # Angka sangat panjang kemungkinan billing code
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                code = match.group(1)
+                if len(code) >= 12 and code.isdigit():
+                    return code
+        
+        # Cari angka panjang di baris terpisah
+        lines = text.split('\n')
+        for line in lines:
+            numbers = re.findall(r'\b\d{12,}\b', line)
+            for num in numbers:
+                if len(num) >= 12:
+                    return num
+        
+        return None
+
     try:
         result = {}
 
-        # 1. Extract Nama Pemberi Kerja
-        company_patterns = [
-            r'Nama\s+Pemberi\s+Kerja\s*:\s*([^\n]+)',  # Format standar
-            r'([A-Z][A-Z\s]*PT\.?[A-Z\s]*)\s*(?=\n.*Alamat)',  # Nama sebelum alamat
-            r'I\.\s*Pemberi\s+Kerja\s+TKA.*?:\s*\n\s*\d+\.\s*Nama\s+Pemberi\s+Kerja\s*:\s*([^\n]+)',  # Format dengan section
-        ]
-        
-        company_name = None
-        for pattern in company_patterns:
-            company_name = safe_extract(pattern, full_text)
-            if company_name:
-                company_name = clean_extracted_text(company_name)
-                break
-        
-        result["Nama Pemberi Kerja"] = company_name
+        # Pertama coba ekstraksi format tabel
+        table_data = extract_from_table_format(full_text)
+        result.update(table_data)
 
-        # 2. Extract Alamat - menangani format multi-line
-        address_patterns = [
-            r'Alamat\s*:\s*(.*?)(?=\n\s*\d+\.\s*Nomor\s+Telepon|\n\s*3\.|$)',
-            r'Alamat\s*:\s*(.*?)(?=Nomor\s+Telepon|Email|$)',
-        ]
+        # Jika tidak ada data dari tabel, gunakan ekstraksi tradisional
+        if not any(result.values()):
+            # 1. Extract Nama Pemberi Kerja (format tradisional)
+            company_patterns = [
+                r'Nama\s+Pemberi\s+Kerja\s*:\s*([^\n]+)',
+                r'([A-Z][A-Z\s]*PT\.?[A-Z\s]*)\s*(?=\n.*Alamat)',
+                r'I\.\s*Pemberi\s+Kerja\s+TKA.*?:\s*\n\s*\d+\.\s*Nama\s+Pemberi\s+Kerja\s*:\s*([^\n]+)',
+            ]
+            
+            for pattern in company_patterns:
+                company_name = safe_extract(pattern, full_text)
+                if company_name:
+                    result["Nama Pemberi Kerja"] = clean_extracted_text(company_name)
+                    break
+
+            # 5. Extract Nama TKA (format tradisional)
+            tka_patterns = [
+                r'Nama\s+TKA\s*:\s*([A-Z\s]+?)(?=\n\s*\d+\.|\n\s*Tempat)',
+                r'Nama\s+TKA\s*:\s*([^\n]+)',
+            ]
+            
+            for pattern in tka_patterns:
+                tka_name = safe_extract(pattern, full_text)
+                if tka_name:
+                    result["Nama TKA"] = clean_extracted_text(tka_name)
+                    break
+
+            # 7. Extract Nomor Paspor (format tradisional)
+            passport_patterns = [
+                r'Nomor\s+Paspor\s*:\s*([A-Z0-9]+)',
+                r'Paspor\s*:\s*([A-Z0-9]+)',
+            ]
+            
+            for pattern in passport_patterns:
+                passport = safe_extract(pattern, full_text)
+                if passport:
+                    result["Nomor Paspor"] = passport
+                    break
+
+            # 8. Extract Kewarganegaraan (format tradisional)
+            nationality_patterns = [
+                r'Kewarganegaraan\s*:\s*([A-Z\s]+?)(?=\n\s*\d+\.|\n\s*Jabatan)',
+                r'Kewarganegaraan\s*:\s*([^\n]+)',
+            ]
+            
+            for pattern in nationality_patterns:
+                nationality = safe_extract(pattern, full_text)
+                if nationality:
+                    result["Kewarganegaraan"] = clean_extracted_text(nationality)
+                    break
+
+            # 9. Extract Jabatan (format tradisional)
+            position_patterns = [
+                r'Jabatan\s*:\s*([A-Z\s]+?)(?=\n\s*\d+\.|\n\s*Kanim)',
+                r'Jabatan\s*:\s*([^\n]+)',
+            ]
+            
+            for pattern in position_patterns:
+                position = safe_extract(pattern, full_text)
+                if position:
+                    result["Jabatan"] = clean_extracted_text(position)
+                    break
+
+            # 17. Extract DKPTKA Amount (format tradisional)
+            dkptka_patterns = [
+                r'DKPTKA\s+yang\s+dibayarkan\s*:\s*(.*?)(?=\n\s*Setelah|\n\s*V\.|\n\s*\*|$)',
+                r'DKPTKA.*?:\s*(US\$[^\n]+)',
+            ]
+            
+            for pattern in dkptka_patterns:
+                dkptka_match = re.search(pattern, full_text, re.DOTALL | re.IGNORECASE)
+                if dkptka_match:
+                    dkptka_text = dkptka_match.group(1).strip()
+                    dkptka_amount = re.sub(r'\n\s*', ' ', dkptka_text)
+                    dkptka_amount = re.sub(r'\s+', ' ', dkptka_amount).strip()
+                    result["DKPTKA"] = dkptka_amount
+                    break
+
+        # Extract field lainnya (berlaku untuk kedua format)
         
-        address = None
-        for pattern in address_patterns:
-            address_match = re.search(pattern, full_text, re.DOTALL | re.IGNORECASE)
-            if address_match:
-                address_text = address_match.group(1)
-                # Clean multi-line address
-                address = re.sub(r'\n\s*', ' ', address_text.strip())
-                address = re.sub(r'\s+', ' ', address)
-                break
-        
-        result["Alamat"] = clean_extracted_text(address)
+        # 2. Extract Alamat
+        if not result.get("Alamat"):
+            address_patterns = [
+                r'Alamat\s*:\s*(.*?)(?=\n\s*\d+\.\s*Nomor\s+Telepon|\n\s*3\.|$)',
+                r'Alamat\s*:\s*(.*?)(?=Nomor\s+Telepon|Email|$)',
+            ]
+            
+            for pattern in address_patterns:
+                address_match = re.search(pattern, full_text, re.DOTALL | re.IGNORECASE)
+                if address_match:
+                    address_text = address_match.group(1)
+                    address = re.sub(r'\n\s*', ' ', address_text.strip())
+                    address = re.sub(r'\s+', ' ', address)
+                    result["Alamat"] = clean_extracted_text(address)
+                    break
 
         # 3. Extract Nomor Telepon
-        phone_patterns = [
-            r'Nomor\s+Telepon\s*:\s*([0-9\-\+$$$$\s]+)',
-            r'Telepon\s*:\s*([0-9\-\+$$$$\s]+)',
-        ]
-        
-        phone = None
-        for pattern in phone_patterns:
-            phone = safe_extract(pattern, full_text)
-            if phone:
-                # Clean phone number format
-                phone = re.sub(r'[^\d\-\+$$$$]', '', phone)
-                break
-        
-        result["No Telepon"] = phone
+        if not result.get("No Telepon"):
+            phone_patterns = [
+                r'Nomor\s+Telepon\s*:\s*([0-9\-\+$$$$\s]+)',
+                r'Telepon\s*:\s*([0-9\-\+$$$$\s]+)',
+            ]
+            
+            for pattern in phone_patterns:
+                phone = safe_extract(pattern, full_text)
+                if phone:
+                    phone = re.sub(r'[^\d\-\+$$$$]', '', phone)
+                    result["No Telepon"] = phone
+                    break
 
         # 4. Extract Email
-        email_patterns = [
-            r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
-            r'E-mail\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
-        ]
-        
-        email = None
-        for pattern in email_patterns:
-            email = safe_extract(pattern, full_text)
-            if email:
-                break
-        
-        result["Email"] = email
-
-        # 5. Extract Nama TKA
-        tka_patterns = [
-            r'Nama\s+TKA\s*:\s*([A-Z\s]+?)(?=\n\s*\d+\.|\n\s*Tempat)',
-            r'Nama\s+TKA\s*:\s*([^\n]+)',
-        ]
-        
-        tka_name = None
-        for pattern in tka_patterns:
-            tka_name = safe_extract(pattern, full_text)
-            if tka_name:
-                break
-        
-        result["Nama TKA"] = clean_extracted_text(tka_name)
+        if not result.get("Email"):
+            email_patterns = [
+                r'Email\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
+                r'E-mail\s*:\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})',
+            ]
+            
+            for pattern in email_patterns:
+                email = safe_extract(pattern, full_text)
+                if email:
+                    result["Email"] = email
+                    break
 
         # 6. Extract Tempat/Tanggal Lahir
-        birth_patterns = [
-            r'Tempat\s*/\s*Tgl\s+Lahir\s*:\s*([^,\n]+,\s*\d{1,2}\s+\w+\s+\d{4})',
-            r'Tempat.*?Lahir\s*:\s*([^\n]+)',
-        ]
-        
-        birth_info = None
-        for pattern in birth_patterns:
-            birth_info = safe_extract(pattern, full_text)
-            if birth_info:
-                break
-        
-        result["Tempat/Tanggal Lahir"] = clean_extracted_text(birth_info)
-
-        # 7. Extract Nomor Paspor
-        passport_patterns = [
-            r'Nomor\s+Paspor\s*:\s*([A-Z0-9]+)',
-            r'Paspor\s*:\s*([A-Z0-9]+)',
-        ]
-        
-        passport = None
-        for pattern in passport_patterns:
-            passport = safe_extract(pattern, full_text)
-            if passport:
-                break
-        
-        result["Nomor Paspor"] = passport
-
-        # 8. Extract Kewarganegaraan
-        nationality_patterns = [
-            r'Kewarganegaraan\s*:\s*([A-Z\s]+?)(?=\n\s*\d+\.|\n\s*Jabatan)',
-            r'Kewarganegaraan\s*:\s*([^\n]+)',
-        ]
-        
-        nationality = None
-        for pattern in nationality_patterns:
-            nationality = safe_extract(pattern, full_text)
-            if nationality:
-                break
-        
-        result["Kewarganegaraan"] = clean_extracted_text(nationality)
-
-        # 9. Extract Jabatan
-        position_patterns = [
-            r'Jabatan\s*:\s*([A-Z\s]+?)(?=\n\s*\d+\.|\n\s*Kanim)',
-            r'Jabatan\s*:\s*([^\n]+)',
-        ]
-        
-        position = None
-        for pattern in position_patterns:
-            position = safe_extract(pattern, full_text)
-            if position:
-                break
-        
-        result["Jabatan"] = clean_extracted_text(position)
+        if not result.get("Tempat/Tanggal Lahir"):
+            birth_patterns = [
+                r'Tempat\s*/\s*Tgl\s+Lahir\s*:\s*([^,\n]+,\s*\d{1,2}\s+\w+\s+\d{4})',
+                r'Tempat.*?Lahir\s*:\s*([^\n]+)',
+            ]
+            
+            for pattern in birth_patterns:
+                birth_info = safe_extract(pattern, full_text)
+                if birth_info:
+                    result["Tempat/Tanggal Lahir"] = clean_extracted_text(birth_info)
+                    break
 
         # 10. Extract Kanim
         kanim_patterns = [
@@ -535,13 +617,11 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
             r'Kanim.*?:\s*([^\n]+)',
         ]
         
-        kanim = None
         for pattern in kanim_patterns:
             kanim = safe_extract(pattern, full_text)
             if kanim:
+                result["Kanim"] = clean_extracted_text(kanim)
                 break
-        
-        result["Kanim"] = clean_extracted_text(kanim)
 
         # 11. Extract Lokasi Kerja
         location_patterns = [
@@ -549,13 +629,11 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
             r'Lokasi\s+Kerja\s*:\s*([^\n]+)',
         ]
         
-        work_location = None
         for pattern in location_patterns:
             work_location = safe_extract(pattern, full_text)
             if work_location:
+                result["Lokasi Kerja"] = clean_extracted_text(work_location)
                 break
-        
-        result["Lokasi Kerja"] = clean_extracted_text(work_location)
 
         # 12. Extract Jangka Waktu
         duration_patterns = [
@@ -563,17 +641,14 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
             r'Jangka\s+Waktu\s*:\s*([^\n]+)',
         ]
         
-        duration = None
         for pattern in duration_patterns:
             duration_match = re.search(pattern, full_text, re.DOTALL | re.IGNORECASE)
             if duration_match:
                 duration_text = duration_match.group(1).strip()
-                # Clean multi-line duration
                 duration = re.sub(r'\n\s*', ' ', duration_text)
                 duration = re.sub(r'\s+', ' ', duration).strip()
+                result["Jangka Waktu"] = duration
                 break
-        
-        result["Jangka Waktu"] = duration
 
         # 13. Extract Tanggal Penerbitan
         issue_date_patterns = [
@@ -581,63 +656,28 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
             r'Tanggal\s+Penerbitan\s*:\s*(\d{1,2}[\-/]\d{1,2}[\-/]\d{4})',
         ]
         
-        issue_date = None
         for pattern in issue_date_patterns:
             issue_date = safe_extract(pattern, full_text)
             if issue_date:
+                result["Tanggal Penerbitan"] = issue_date
                 break
-        
-        result["Tanggal Penerbitan"] = issue_date
 
-        # 14. Extract Kode Billing Pembayaran DKPTKA - tangani baris terputus
-        billing_code = None
+        # 14. Extract Kode Billing Pembayaran
+        billing_code = extract_billing_code_advanced(full_text)
+        if billing_code:
+            result["Kode Billing Pembayaran"] = billing_code
 
-        # Pecah text menjadi list baris
-        lines = full_text.splitlines()
-        for i, line in enumerate(lines):
-            # Cari baris yang mengandung 'Kode Billing Pembayaran'
-            if 'Kode Billing Pembayaran' in line:
-                # Cek dua baris setelahnya
-                next_lines = lines[i+1:i+4]  # Antisipasi 2 baris ke bawah
-                joined = " ".join(next_lines)
-                match = re.search(r'(\d{12,})', joined)
-                if match:
-                    billing_code = match.group(1).strip()
-                    break
-
-        result["Kode Billing Pembayaran"] = billing_code
-        
         # 15. Extract No Rekening
         account_patterns = [
             r'No\s+Rekening\s*:\s*([0-9]+)',
             r'Rekening\s*:\s*([0-9]+)',
         ]
         
-        account_no = None
         for pattern in account_patterns:
             account_no = safe_extract(pattern, full_text)
             if account_no:
+                result["No Rekening"] = account_no
                 break
-        
-        result["No Rekening"] = account_no
-
-        # 17. Extract DKPTKA Amount
-        dkptka_patterns = [
-            r'DKPTKA\s+yang\s+dibayarkan\s*:\s*(.*?)(?=\n\s*Setelah|\n\s*V\.|\n\s*\*|$)',
-            r'DKPTKA.*?:\s*(US\$[^\n]+)',
-        ]
-        
-        dkptka_amount = None
-        for pattern in dkptka_patterns:
-            dkptka_match = re.search(pattern, full_text, re.DOTALL | re.IGNORECASE)
-            if dkptka_match:
-                dkptka_text = dkptka_match.group(1).strip()
-                # Clean multi-line DKPTKA amount
-                dkptka_amount = re.sub(r'\n\s*', ' ', dkptka_text)
-                dkptka_amount = re.sub(r'\s+', ' ', dkptka_amount).strip()
-                break
-        
-        result["DKPTKA"] = dkptka_amount
 
         # 18. Set document type
         result["Jenis Dokumen"] = "DKPTKA"
@@ -658,11 +698,9 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
             "Jenis Dokumen": "DKPTKA"
         }
 
-
 def validate_dkptka_data(extracted_data: Dict) -> Dict[str, str]:
     """
     Validasi data DKPTKA yang diekstrak dan memberikan feedback
-    Termasuk validasi Kode Billing Pembayaran
     """
     validation_result = {
         "status": "valid",
@@ -670,13 +708,13 @@ def validate_dkptka_data(extracted_data: Dict) -> Dict[str, str]:
         "warnings": []
     }
     
-    # Required fields for DKPTKA (updated with new field)
+    # Required fields for DKPTKA
     required_fields = [
         "Nama Pemberi Kerja",
-        "Alamat", 
         "Nama TKA",
         "Nomor Paspor",
-        "Kode Billing Pembayaran",
+        "Kewarganegaraan",
+        "Jabatan",
         "DKPTKA"
     ]
     
@@ -701,6 +739,11 @@ def validate_dkptka_data(extracted_data: Dict) -> Dict[str, str]:
     if billing_code:
         if not re.match(r'^\d{10,}$', str(billing_code)):
             validation_result["warnings"].append("Format kode billing pembayaran mungkin tidak valid (harus berupa angka minimal 10 digit)")
+    
+    # Validate DKPTKA amount
+    dkptka_amount = extracted_data.get("DKPTKA")
+    if dkptka_amount and not re.search(r'US\$|USD|\$', str(dkptka_amount)):
+        validation_result["warnings"].append("Format jumlah DKPTKA mungkin tidak valid")
     
     return validation_result
 
