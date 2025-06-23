@@ -1,14 +1,11 @@
 """
 Main Streamlit Application for LDB (Ekstraksi Dokumen Imigrasi)
-Complete version with table display and file rename functionality
+Complete version using the existing file_handler.py
 """
 
 import streamlit as st
 import sys
-import io
 import time
-import zipfile
-import tempfile
 import shutil
 from pathlib import Path
 
@@ -52,16 +49,18 @@ except ImportError as e:
     st.warning(f"⚠️ Database components not found: {e}")
     st.info("Running in legacy mode. Some features may be limited.")
 
-# Import extraction modules
-EXTRACTION_ENABLED = False
+# Import file handler
+FILE_HANDLER_ENABLED = False
 try:
-    import pdfplumber
-    from extractors import extract_document_data
-    EXTRACTION_ENABLED = True
-    st.success("✅ Extraction modules loaded successfully!")
+    from file_handler import (
+        process_pdfs, process_pdfs_batch, validate_pdf_file, 
+        get_file_info, cleanup_temp_directory
+    )
+    FILE_HANDLER_ENABLED = True
+    st.success("✅ File handler loaded successfully!")
 except ImportError as e:
-    st.error(f"❌ Extraction modules not found: {e}")
-    st.info("Please ensure extractors.py and pdfplumber are available.")
+    st.error(f"❌ File handler not found: {e}")
+    st.info("Please ensure file_handler.py is available.")
 
 def initialize_app():
     """Initialize the Streamlit application"""
@@ -118,12 +117,12 @@ def initialize_app():
         margin: 1rem 0;
     }
     
-    .extraction-result {
+    .file-info {
         background: #f8f9fa;
-        padding: 1rem;
+        padding: 0.75rem;
         border-radius: 8px;
-        border-left: 4px solid #28a745;
-        margin: 1rem 0;
+        border-left: 4px solid #007bff;
+        margin: 0.5rem 0;
     }
     
     /* Custom table styling */
@@ -149,129 +148,8 @@ def initialize_app():
     .dataframe tr:hover {
         background-color: #f5f5f5;
     }
-    
-    /* Tab styling */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        padding-left: 20px;
-        padding-right: 20px;
-        background-color: #f8f9fa;
-        border-radius: 8px 8px 0 0;
-        color: #6c757d;
-        font-weight: 500;
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background-color: #007bff;
-        color: white;
-    }
     </style>
     """, unsafe_allow_html=True)
-
-def extract_pdf_text(uploaded_file):
-    """Extract text from uploaded PDF file"""
-    try:
-        pdf_text = ""
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    pdf_text += page_text + "\n"
-        return pdf_text.strip()
-    except Exception as e:
-        st.error(f"Error extracting PDF text: {str(e)}")
-        return None
-
-def generate_new_filename(extracted_data, original_filename, use_name=True, use_passport=True):
-    """Generate new filename based on extracted data"""
-    try:
-        # Get file extension
-        file_ext = Path(original_filename).suffix
-        
-        # Extract relevant fields
-        name = extracted_data.get('Name') or extracted_data.get('Nama TKA') or extracted_data.get('nama', '')
-        passport = (extracted_data.get('Passport Number') or 
-                   extracted_data.get('Nomor Paspor') or 
-                   extracted_data.get('nomor_paspor', ''))
-        doc_type = extracted_data.get('Jenis Dokumen', 'DOC')
-        
-        # Clean name and passport for filename
-        if name:
-            name = ''.join(c for c in name if c.isalnum() or c in (' ', '-', '_')).strip()
-            name = name.replace(' ', '_')
-        
-        if passport:
-            passport = ''.join(c for c in passport if c.isalnum()).strip()
-        
-        # Build new filename
-        parts = [doc_type]
-        
-        if use_name and name:
-            parts.append(name)
-        
-        if use_passport and passport:
-            parts.append(passport)
-        
-        # If no useful data found, use original name
-        if len(parts) == 1:
-            return original_filename
-        
-        new_filename = '_'.join(parts) + file_ext
-        
-        # Ensure filename is not too long
-        if len(new_filename) > 100:
-            new_filename = new_filename[:97] + file_ext
-        
-        return new_filename
-    
-    except Exception as e:
-        st.error(f"Error generating filename: {str(e)}")
-        return original_filename
-
-def create_renamed_files_zip(uploaded_files, extraction_results, use_name=True, use_passport=True):
-    """Create ZIP file with renamed PDFs"""
-    try:
-        # Create temporary directory
-        temp_dir = tempfile.mkdtemp()
-        zip_path = Path(temp_dir) / "renamed_files.zip"
-        
-        renamed_files_info = {}
-        
-        with zipfile.ZipFile(zip_path, 'w') as zipf:
-            for i, uploaded_file in enumerate(uploaded_files):
-                # Get extraction result for this file
-                if i < len(extraction_results):
-                    extracted_data = extraction_results[i]
-                else:
-                    extracted_data = {}
-                
-                # Generate new filename
-                new_filename = generate_new_filename(
-                    extracted_data, 
-                    uploaded_file.name, 
-                    use_name, 
-                    use_passport
-                )
-                
-                # Store rename info
-                renamed_files_info[uploaded_file.name] = {
-                    'new_name': new_filename,
-                    'extracted_data': extracted_data
-                }
-                
-                # Add file to ZIP with new name
-                uploaded_file.seek(0)  # Reset file pointer
-                zipf.writestr(new_filename, uploaded_file.read())
-        
-        return zip_path, renamed_files_info
-    
-    except Exception as e:
-        st.error(f"Error creating renamed files: {str(e)}")
-        return None, {}
 
 def render_sidebar(user, auth_manager):
     """Render sidebar with user info and navigation"""
@@ -287,7 +165,7 @@ def render_sidebar(user, auth_manager):
         # Show module status
         st.markdown("**📦 Module Status:**")
         st.markdown(f"- Database: {'✅' if DATABASE_ENABLED else '❌'}")
-        st.markdown(f"- Extraction: {'✅' if EXTRACTION_ENABLED else '❌'}")
+        st.markdown(f"- File Handler: {'✅' if FILE_HANDLER_ENABLED else '❌'}")
         
         st.divider()
         
@@ -327,11 +205,11 @@ def render_sidebar(user, auth_manager):
             auth_manager.logout()
 
 def render_extraction_page(user, db_manager):
-    """Render document extraction page with table display and file rename"""
+    """Render document extraction page using file_handler.py"""
     st.markdown('<div class="main-header"><h1>📄 Ekstraksi Dokumen Imigrasi</h1></div>', unsafe_allow_html=True)
     
-    if not EXTRACTION_ENABLED:
-        st.error("❌ Extraction modules not available. Please check extractors.py and install pdfplumber.")
+    if not FILE_HANDLER_ENABLED:
+        st.error("❌ File handler not available. Please check file_handler.py.")
         return
     
     # File upload section
@@ -345,21 +223,38 @@ def render_extraction_page(user, db_manager):
     )
     
     if uploaded_files:
-        # Display file info
-        st.subheader("📋 File yang Diupload")
+        # Validate files
+        valid_files = []
+        invalid_files = []
         
-        for i, uploaded_file in enumerate(uploaded_files):
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.write(f"**{i+1}. {uploaded_file.name}**")
-            
-            with col2:
-                file_size_mb = uploaded_file.size / (1024 * 1024)
-                st.write(f"Ukuran: {file_size_mb:.2f} MB")
-            
-            with col3:
-                st.write(f"Tipe: {uploaded_file.type}")
+        for uploaded_file in uploaded_files:
+            is_valid, message = validate_pdf_file(uploaded_file)
+            if is_valid:
+                valid_files.append(uploaded_file)
+            else:
+                invalid_files.append((uploaded_file.name, message))
+        
+        # Show file validation results
+        if invalid_files:
+            st.error("❌ File tidak valid ditemukan:")
+            for filename, error in invalid_files:
+                st.write(f"- {filename}: {error}")
+        
+        if not valid_files:
+            st.warning("⚠️ Tidak ada file valid untuk diproses.")
+            return
+        
+        # Display valid file info
+        st.subheader("📋 File Valid yang Akan Diproses")
+        
+        for i, uploaded_file in enumerate(valid_files):
+            file_info = get_file_info(uploaded_file)
+            st.markdown(f"""
+            <div class="file-info">
+                <strong>{i+1}. {file_info['name']}</strong><br>
+                Ukuran: {file_info['size_mb']} MB | Tipe: {file_info['type']}
+            </div>
+            """, unsafe_allow_html=True)
         
         # Document type selection
         st.subheader("📋 Pilih Jenis Dokumen")
@@ -367,7 +262,7 @@ def render_extraction_page(user, db_manager):
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            doc_options = list(DOCUMENT_TYPES.keys()) if DOCUMENT_TYPES else ['SKTT', 'EVLN', 'ITAS', 'ITK', 'NOTIFICATION', 'DKPTKA']
+            doc_options = list(DOCUMENT_TYPES.keys()) if DOCUMENT_TYPES else ['SKTT', 'EVLN', 'ITAS', 'ITK', 'Notifikasi', 'DKPTKA']
             
             def format_doc_type(x):
                 if DOCUMENT_TYPES and x in DOCUMENT_TYPES:
@@ -393,59 +288,31 @@ def render_extraction_page(user, db_manager):
                 try:
                     start_time = time.time()
                     
-                    # Process all files
-                    all_extraction_results = []
-                    
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    for i, uploaded_file in enumerate(uploaded_files):
-                        status_text.text(f"Memproses file {i+1}/{len(uploaded_files)}: {uploaded_file.name}")
-                        
-                        # Extract text from PDF
-                        pdf_text = extract_pdf_text(uploaded_file)
-                        
-                        if pdf_text:
-                            # Process with extraction function
-                            extraction_result = extract_document_data(pdf_text, doc_type)
-                            extraction_result['filename'] = uploaded_file.name
-                            all_extraction_results.append(extraction_result)
-                        else:
-                            # Add error result
-                            error_result = {
-                                'filename': uploaded_file.name,
-                                'Error': 'Gagal mengekstrak teks dari PDF',
-                                'Jenis Dokumen': doc_type
-                            }
-                            all_extraction_results.append(error_result)
-                        
-                        # Update progress
-                        progress_bar.progress((i + 1) / len(uploaded_files))
+                    # Process files using file_handler
+                    df, excel_path, renamed_files, zip_path, temp_dir = process_pdfs(
+                        valid_files, doc_type, use_name, use_passport
+                    )
                     
                     processing_time = time.time() - start_time
                     
-                    # Clear progress indicators
-                    progress_bar.empty()
-                    status_text.empty()
-                    
                     # Log to database if available
                     if DATABASE_ENABLED and db_manager:
-                        for result in all_extraction_results:
+                        for _, row in df.iterrows():
                             db_manager.log_extraction(
                                 user_id=user['id'],
-                                filename=result['filename'],
-                                file_size=next((f.size for f in uploaded_files if f.name == result['filename']), 0),
+                                filename=row.get('filename', 'unknown'),
+                                file_size=next((f.size for f in valid_files if f.name == row.get('filename')), 0),
                                 document_type=doc_type,
-                                extracted_data=result,
-                                processing_time=processing_time / len(uploaded_files),
-                                status="completed" if "Error" not in result else "failed"
+                                extracted_data=row.to_dict(),
+                                processing_time=processing_time / len(valid_files),
+                                status="completed" if "Error" not in row.to_dict() else "failed"
                             )
                         
                         # Log activity
                         db_manager.log_activity(
                             user_id=user['id'],
                             action="BATCH_DOCUMENT_EXTRACTED",
-                            details=f"Extracted {len(uploaded_files)} {doc_type} documents"
+                            details=f"Extracted {len(valid_files)} {doc_type} documents using file_handler"
                         )
                     
                     # Display success header
@@ -462,102 +329,44 @@ def render_extraction_page(user, db_manager):
                     with tab1:
                         st.subheader("Extraction Result Data")
                         
-                        # Prepare data for table
-                        import pandas as pd
-                        
-                        # Create standardized columns based on document type and actual extraction fields
+                        # Display table with proper column configuration
                         if doc_type == "SKTT":
-                            columns = [
-                                'NIK', 'Name', 'Jenis Kelamin', 'Place of Birth', 'Date of Birth', 
-                                'Nationality', 'Occupation', 'Address', 'KITAS/KITAP', 
-                                'Passport Expiry', 'Date Issue'
-                            ]
+                            columns_to_show = ['NIK', 'Name', 'Jenis Kelamin', 'Place of Birth', 'Date of Birth', 'Nationality', 'Occupation', 'Address']
                         elif doc_type == "EVLN":
-                            columns = [
-                                'Name', 'Place of Birth', 'Date of Birth', 'Passport No', 
-                                'Passport Expiry', 'Date Issue'
-                            ]
-                        elif doc_type == "ITAS":
-                            columns = [
-                                'Name', 'Permit Number', 'Stay Permit Expiry', 'Place & Date of Birth',
-                                'Passport Number', 'Passport Expiry', 'Nationality', 'Gender',
-                                'Address', 'Occupation', 'Guarantor', 'Date Issue'
-                            ]
-                        elif doc_type == "ITK":
-                            columns = [
-                                'Name', 'Permit Number', 'Stay Permit Expiry', 'Place & Date of Birth',
-                                'Passport Number', 'Passport Expiry', 'Nationality', 'Gender',
-                                'Address', 'Occupation', 'Guarantor', 'Date Issue'
-                            ]
-                        elif doc_type == "NOTIFICATION":
-                            columns = [
-                                'Nomor Keputusan', 'Nama TKA', 'Tempat/Tanggal Lahir', 'Kewarganegaraan',
-                                'Alamat Tempat Tinggal', 'Nomor Paspor', 'Jabatan', 'Lokasi Kerja',
-                                'Berlaku', 'Date Issue'
-                            ]
+                            columns_to_show = ['Name', 'Place of Birth', 'Date of Birth', 'Passport No', 'Passport Expiry', 'Date Issue']
+                        elif doc_type in ["ITAS", "ITK"]:
+                            columns_to_show = ['Name', 'Permit Number', 'Stay Permit Expiry', 'Passport Number', 'Nationality', 'Gender']
+                        elif doc_type == "Notifikasi":
+                            columns_to_show = ['Nomor Keputusan', 'Nama TKA', 'Tempat/Tanggal Lahir', 'Kewarganegaraan', 'Nomor Paspor', 'Jabatan']
                         elif doc_type == "DKPTKA":
-                            columns = [
-                                'Nama Pemberi Kerja', 'Alamat', 'No Telepon', 'Email', 'Nama TKA',
-                                'Tempat/Tanggal Lahir', 'Nomor Paspor', 'Kewarganegaraan', 'Jabatan',
-                                'Kanim', 'Lokasi Kerja', 'Jangka Waktu', 'Tanggal Penerbitan',
-                                'Kode Billing Pembayaran', 'No Rekening', 'DKPTKA'
-                            ]
+                            columns_to_show = ['Nama Pemberi Kerja', 'Nama TKA', 'Nomor Paspor', 'Kewarganegaraan', 'Jabatan', 'DKPTKA']
                         else:
-                            # Generic columns for unknown document types
-                            all_keys = set()
-                            for result in all_extraction_results:
-                                all_keys.update(result.keys())
-                            columns = [k for k in all_keys if k not in ['filename', 'Jenis Dokumen', 'Error']]
+                            columns_to_show = [col for col in df.columns if col not in ['filename', 'Jenis Dokumen', 'Error']]
                         
-                        # Create DataFrame
-                        table_data = []
-                        for i, result in enumerate(all_extraction_results):
-                            row = {'No': i + 1}
-                            for col in columns:
-                                row[col] = result.get(col, '-')
-                            table_data.append(row)
+                        # Filter DataFrame to show only relevant columns
+                        display_df = df.copy()
+                        available_columns = [col for col in columns_to_show if col in display_df.columns]
+                        if available_columns:
+                            display_df = display_df[available_columns]
                         
-                        df = pd.DataFrame(table_data)
-                        
-                        # Display table with custom styling and responsive columns
                         st.dataframe(
-                            df,
+                            display_df,
                             use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "No": st.column_config.NumberColumn("No", width="small"),
-                                "NIK": st.column_config.TextColumn("NIK", width="medium"),
-                                "Name": st.column_config.TextColumn("Name", width="medium"),
-                                "Nama TKA": st.column_config.TextColumn("Nama TKA", width="medium"),
-                                "Nama Pemberi Kerja": st.column_config.TextColumn("Nama Pemberi Kerja", width="large"),
-                                "Passport No": st.column_config.TextColumn("Passport No", width="small"),
-                                "Passport Number": st.column_config.TextColumn("Passport Number", width="small"),
-                                "Nomor Paspor": st.column_config.TextColumn("Nomor Paspor", width="small"),
-                                "Date of Birth": st.column_config.DateColumn("Date of Birth"),
-                                "Date Issue": st.column_config.DateColumn("Date Issue"),
-                                "Tanggal Penerbitan": st.column_config.DateColumn("Tanggal Penerbitan"),
-                                "Address": st.column_config.TextColumn("Address", width="large"),
-                                "Alamat": st.column_config.TextColumn("Alamat", width="large"),
-                                "Alamat Tempat Tinggal": st.column_config.TextColumn("Alamat Tempat Tinggal", width="large"),
-                                "Email": st.column_config.TextColumn("Email", width="medium"),
-                                "No Telepon": st.column_config.TextColumn("No Telepon", width="medium"),
-                                "Kode Billing Pembayaran": st.column_config.TextColumn("Kode Billing", width="medium"),
-                                "DKPTKA": st.column_config.TextColumn("DKPTKA", width="medium"),
-                            }
+                            hide_index=True
                         )
                         
                         # Show statistics
                         col1, col2, col3, col4 = st.columns(4)
                         
                         with col1:
-                            st.metric("Total Files", len(uploaded_files))
+                            st.metric("Total Files", len(valid_files))
                         
                         with col2:
-                            successful = len([r for r in all_extraction_results if "Error" not in r])
+                            successful = len([row for _, row in df.iterrows() if "Error" not in row.to_dict()])
                             st.metric("Berhasil", successful)
                         
                         with col3:
-                            failed = len([r for r in all_extraction_results if "Error" in r])
+                            failed = len([row for _, row in df.iterrows() if "Error" in row.to_dict()])
                             st.metric("Gagal", failed)
                         
                         with col4:
@@ -566,10 +375,9 @@ def render_extraction_page(user, db_manager):
                     with tab2:
                         st.subheader("Download File Excel")
                         
-                        # Create Excel file
-                        excel_buffer = io.BytesIO()
-                        df.to_excel(excel_buffer, index=False, engine='openpyxl')
-                        excel_data = excel_buffer.getvalue()
+                        # Read Excel file
+                        with open(excel_path, "rb") as f:
+                            excel_data = f.read()
                         
                         col1, col2 = st.columns([3, 1])
                         
@@ -581,7 +389,7 @@ def render_extraction_page(user, db_manager):
                                 </div>
                                 <div>
                                     <p style="margin: 0; font-weight: 600;">Hasil_Ekstraksi_{doc_type}.xlsx</p>
-                                    <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Excel Spreadsheet • {len(uploaded_files)} files • Diekspor pada {time.strftime('%d/%m/%Y %H:%M')}</p>
+                                    <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Excel Spreadsheet • {len(valid_files)} files • Diekspor pada {time.strftime('%d/%m/%Y %H:%M')}</p>
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
@@ -598,59 +406,49 @@ def render_extraction_page(user, db_manager):
                     with tab3:
                         st.subheader("File yang Telah di-Rename")
                         
-                        # Create renamed files ZIP
-                        with st.spinner("Membuat file yang telah di-rename..."):
-                            zip_path, renamed_files_info = create_renamed_files_zip(
-                                uploaded_files, all_extraction_results, use_name, use_passport
-                            )
+                        # Display rename information
+                        st.markdown('<div style="background-color: #f8fafc; border-radius: 0.5rem; padding: 1rem;">', unsafe_allow_html=True)
                         
-                        if zip_path and renamed_files_info:
-                            # Display rename information
-                            st.markdown('<div style="background-color: #f8fafc; border-radius: 0.5rem; padding: 1rem;">', unsafe_allow_html=True)
-                            
-                            for original_name, file_info in renamed_files_info.items():
-                                st.markdown(f'''
-                                <div style="display: flex; align-items: center; padding: 0.75rem; border-bottom: 1px solid #e2e8f0;">
-                                    <div style="flex: 1;">
-                                        <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Nama Asli:</p>
-                                        <p style="margin: 0; font-weight: 600;">{original_name}</p>
-                                    </div>
-                                    <div style="margin: 0 1rem;">
-                                        <span style="color: #64748b;">→</span>
-                                    </div>
-                                    <div style="flex: 1;">
-                                        <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Nama Baru:</p>
-                                        <p style="margin: 0; font-weight: 600; color: #0369a1;">{file_info['new_name']}</p>
-                                    </div>
+                        for original_name, file_info in renamed_files.items():
+                            st.markdown(f'''
+                            <div style="display: flex; align-items: center; padding: 0.75rem; border-bottom: 1px solid #e2e8f0;">
+                                <div style="flex: 1;">
+                                    <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Nama Asli:</p>
+                                    <p style="margin: 0; font-weight: 600;">{original_name}</p>
                                 </div>
-                                ''', unsafe_allow_html=True)
-                            
-                            st.markdown('</div>', unsafe_allow_html=True)
-                            
-                            # Download ZIP button
-                            with open(zip_path, "rb") as f:
-                                zip_data = f.read()
-                            
-                            st.download_button(
-                                label="📁 Download All Renamed Files (ZIP)",
-                                data=zip_data,
-                                file_name=f"Renamed_{doc_type}_Files_{int(time.time())}.zip",
-                                mime="application/zip",
-                                use_container_width=True
-                            )
-                            
-                            # Clean up temporary files
-                            shutil.rmtree(zip_path.parent)
+                                <div style="margin: 0 1rem;">
+                                    <span style="color: #64748b;">→</span>
+                                </div>
+                                <div style="flex: 1;">
+                                    <p style="margin: 0; color: #64748b; font-size: 0.85rem;">Nama Baru:</p>
+                                    <p style="margin: 0; font-weight: 600; color: #0369a1;">{file_info['new_name']}</p>
+                                </div>
+                            </div>
+                            ''', unsafe_allow_html=True)
                         
-                        else:
-                            st.error("❌ Gagal membuat file yang telah di-rename")
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        
+                        # Download ZIP button
+                        with open(zip_path, "rb") as f:
+                            zip_data = f.read()
+                        
+                        st.download_button(
+                            label="📁 Download All Renamed Files (ZIP)",
+                            data=zip_data,
+                            file_name=f"Renamed_{doc_type}_Files_{int(time.time())}.zip",
+                            mime="application/zip",
+                            use_container_width=True
+                        )
+                    
+                    # Clean up temporary files
+                    cleanup_temp_directory(temp_dir)
                     
                 except Exception as e:
                     st.error(f"❌ Terjadi kesalahan: {str(e)}")
                     
                     # Log failed extraction if database available
                     if DATABASE_ENABLED and db_manager:
-                        for uploaded_file in uploaded_files:
+                        for uploaded_file in valid_files:
                             db_manager.log_extraction(
                                 user_id=user['id'],
                                 filename=uploaded_file.name,
@@ -750,26 +548,24 @@ def main():
         st.title("📄 Ekstraksi Dokumen Imigrasi")
         st.warning("⚠️ Running in legacy mode. Database features not available.")
         
-        # Simple extraction interface
-        uploaded_files = st.file_uploader("Upload PDF", type=['pdf'], accept_multiple_files=True)
-        
-        if uploaded_files and EXTRACTION_ENABLED:
-            doc_options = list(DOCUMENT_TYPES.keys()) if DOCUMENT_TYPES else ['SKTT', 'EVLN', 'ITAS', 'ITK']
-            doc_type = st.selectbox("Document Type", doc_options)
+        # Simple extraction interface using file_handler
+        if FILE_HANDLER_ENABLED:
+            uploaded_files = st.file_uploader("Upload PDF", type=['pdf'], accept_multiple_files=True)
             
-            if st.button("Process"):
-                with st.spinner("Processing..."):
-                    results = []
-                    for uploaded_file in uploaded_files:
-                        pdf_text = extract_pdf_text(uploaded_file)
-                        if pdf_text:
-                            result = extract_document_data(pdf_text, doc_type)
-                            results.append(result)
-                    
-                    if results:
-                        import pandas as pd
-                        df = pd.DataFrame(results)
-                        st.dataframe(df, use_container_width=True)
+            if uploaded_files:
+                doc_options = list(DOCUMENT_TYPES.keys()) if DOCUMENT_TYPES else ['SKTT', 'EVLN', 'ITAS', 'ITK']
+                doc_type = st.selectbox("Document Type", doc_options)
+                
+                if st.button("Process"):
+                    with st.spinner("Processing..."):
+                        try:
+                            df, excel_path, renamed_files, zip_path, temp_dir = process_pdfs(
+                                uploaded_files, doc_type, True, True
+                            )
+                            st.dataframe(df, use_container_width=True)
+                            cleanup_temp_directory(temp_dir)
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
 
 if __name__ == "__main__":
     main()
