@@ -465,19 +465,45 @@ def render_extraction_page(user, db_manager):
                         # Prepare data for table
                         import pandas as pd
                         
-                        # Create standardized columns based on document type
+                        # Create standardized columns based on document type and actual extraction fields
                         if doc_type == "SKTT":
-                            columns = ['NIK', 'Name', 'Jenis Kelamin', 'Place of Birth', 'Date of Birth', 'Nationality', 'Occupation', 'Address']
+                            columns = [
+                                'NIK', 'Name', 'Jenis Kelamin', 'Place of Birth', 'Date of Birth', 
+                                'Nationality', 'Occupation', 'Address', 'KITAS/KITAP', 
+                                'Passport Expiry', 'Date Issue'
+                            ]
                         elif doc_type == "EVLN":
-                            columns = ['Name', 'Place of Birth', 'Date of Birth', 'Passport No', 'Passport Expiry', 'Date Issue']
-                        elif doc_type in ["ITAS", "ITK"]:
-                            columns = ['Name', 'Permit Number', 'Place & Date of Birth', 'Passport Number', 'Passport Expiry', 'Nationality', 'Gender']
+                            columns = [
+                                'Name', 'Place of Birth', 'Date of Birth', 'Passport No', 
+                                'Passport Expiry', 'Date Issue'
+                            ]
+                        elif doc_type == "ITAS":
+                            columns = [
+                                'Name', 'Permit Number', 'Stay Permit Expiry', 'Place & Date of Birth',
+                                'Passport Number', 'Passport Expiry', 'Nationality', 'Gender',
+                                'Address', 'Occupation', 'Guarantor', 'Date Issue'
+                            ]
+                        elif doc_type == "ITK":
+                            columns = [
+                                'Name', 'Permit Number', 'Stay Permit Expiry', 'Place & Date of Birth',
+                                'Passport Number', 'Passport Expiry', 'Nationality', 'Gender',
+                                'Address', 'Occupation', 'Guarantor', 'Date Issue'
+                            ]
                         elif doc_type == "NOTIFICATION":
-                            columns = ['Nomor Keputusan', 'Nama TKA', 'Tempat/Tanggal Lahir', 'Kewarganegaraan', 'Nomor Paspor', 'Jabatan']
+                            columns = [
+                                'Nomor Keputusan', 'Nama TKA', 'Tempat/Tanggal Lahir', 'Kewarganegaraan',
+                                'Alamat Tempat Tinggal', 'Nomor Paspor', 'Jabatan', 'Lokasi Kerja',
+                                'Berlaku', 'Date Issue'
+                            ]
                         elif doc_type == "DKPTKA":
-                            columns = ['Nama Pemberi Kerja', 'Nama TKA', 'Nomor Paspor', 'Kewarganegaraan', 'Jabatan', 'DKPTKA']
+                            columns = [
+                                'Nama Pemberi Kerja', 'Alamat', 'No Telepon', 'Email', 'Nama TKA',
+                                'Tempat/Tanggal Lahir', 'Nomor Paspor', 'Kewarganegaraan', 'Jabatan',
+                                'Kanim', 'Lokasi Kerja', 'Jangka Waktu', 'Tanggal Penerbitan',
+                                'Kode Billing Pembayaran', 'No Rekening', 'DKPTKA'
+                            ]
                         else:
-                            # Generic columns
+                            # Generic columns for unknown document types
                             all_keys = set()
                             for result in all_extraction_results:
                                 all_keys.update(result.keys())
@@ -493,13 +519,30 @@ def render_extraction_page(user, db_manager):
                         
                         df = pd.DataFrame(table_data)
                         
-                        # Display table with custom styling
+                        # Display table with custom styling and responsive columns
                         st.dataframe(
                             df,
                             use_container_width=True,
                             hide_index=True,
                             column_config={
                                 "No": st.column_config.NumberColumn("No", width="small"),
+                                "NIK": st.column_config.TextColumn("NIK", width="medium"),
+                                "Name": st.column_config.TextColumn("Name", width="medium"),
+                                "Nama TKA": st.column_config.TextColumn("Nama TKA", width="medium"),
+                                "Nama Pemberi Kerja": st.column_config.TextColumn("Nama Pemberi Kerja", width="large"),
+                                "Passport No": st.column_config.TextColumn("Passport No", width="small"),
+                                "Passport Number": st.column_config.TextColumn("Passport Number", width="small"),
+                                "Nomor Paspor": st.column_config.TextColumn("Nomor Paspor", width="small"),
+                                "Date of Birth": st.column_config.DateColumn("Date of Birth"),
+                                "Date Issue": st.column_config.DateColumn("Date Issue"),
+                                "Tanggal Penerbitan": st.column_config.DateColumn("Tanggal Penerbitan"),
+                                "Address": st.column_config.TextColumn("Address", width="large"),
+                                "Alamat": st.column_config.TextColumn("Alamat", width="large"),
+                                "Alamat Tempat Tinggal": st.column_config.TextColumn("Alamat Tempat Tinggal", width="large"),
+                                "Email": st.column_config.TextColumn("Email", width="medium"),
+                                "No Telepon": st.column_config.TextColumn("No Telepon", width="medium"),
+                                "Kode Billing Pembayaran": st.column_config.TextColumn("Kode Billing", width="medium"),
+                                "DKPTKA": st.column_config.TextColumn("DKPTKA", width="medium"),
                             }
                         )
                         
