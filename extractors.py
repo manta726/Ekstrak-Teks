@@ -45,7 +45,7 @@ def extract_sktt(text):
         "Jenis Dokumen": "SKTT"
     }
 
-# ========================= Ekstraksi EVLN =========================
+# ========================= Ekstraksi EVLN (FIXED) =========================
 def extract_evln(text):
     # Inisialisasi data
     data = {
@@ -54,7 +54,7 @@ def extract_evln(text):
         "Date of Birth": "",
         "Passport No": "",
         "Passport Expiry": "",
-        "Date Issue": "",  # Kolom baru yang ditambahkan
+        "Date Issue": "",
         "Jenis Dokumen": "EVLN"
     }
     
@@ -84,52 +84,7 @@ def extract_evln(text):
             if len(parts) > 1:
                 pob_text = parts[1].strip()
                 # Hapus "Visa Type" jika ada
-                pob_cleaned = re.sub(r'\s*Visa\s*Type\s*.*', '', pob_text)
-        
-        elif re.search(r"(?i)\bDate of Birth\b|\bTanggal Lahir\b", line):
-            match = re.search(r"(\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})", line)
-            if match:
-                data["Date of Birth"] = format_date(match.group(1))
-        
-        elif re.search(r"(?i)\bPassport No\b", line):
-            match = re.search(r"\b([A-Z0-9]+)\b", line)
-            if match:
-                data["Passport No"] = match.group(1)
-        
-        elif re.search(r"(?i)\bPassport Expiry\b", line):
-            match = re.search(r"(\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})", line)
-            if match:
-                data["Passport Expiry"] = format_date(match.group(1))
-        
-        elif re.search(r"(?i)\bDate of issue\b|\bTanggal Penerbitan\b", line):  # Diperbaiki untuk mencocokkan format dokumen
-            match = re.search(r"(\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})", line)
-            if match:
-                data["Date Issue"] = format_date(match.group(1))
-    
-    # Ekstraksi Date Issue dengan pattern khusus
-    if not data["Date Issue"]:
-        issue_patterns = [
-            r"(?i)(?:Date\s+of\s+Issue|Issue\s+Date|Issued\s+on|Tanggal\s+Penerbitan)\s*:?\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{4})",
-            r"(?i)(?:Issued|Diterbitkan)\s*:?\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{4})"
-        ]
-        
-        for pattern in issue_patterns:
-            match = re.search(pattern, text)
-            if match:
-                data["Date Issue"] = format_date(match.group(1))
-                break
-    
-    # Jika belum dapat issue date, cari tanggal yang tahunnya antara 2020-2025
-    if not data["Date Issue"]:
-        dates_found = re.findall(r"(\d{1,2}[/\-]\d{1,2}[/\-]\d{4})", text)
-        for date_str in dates_found:
-            formatted_date = format_date(date_str)
-            year = int(formatted_date.split('/')[-1])
-            if 2020 <= year <= 2025 and formatted_date != data["Date of Birth"] and formatted_date != data["Passport Expiry"]:
-                data["Date Issue"] = formatted_date
-                break
-    
-    return data, '', pob_text, flags=re.IGNORECASE)
+                pob_cleaned = re.sub(r'\s*Visa\s*Type\s*.*', '', pob_text, flags=re.IGNORECASE)
                 data["Place of Birth"] = clean_text(pob_cleaned, is_name_or_pob=True)
         
         elif re.search(r"(?i)\bDate of Birth\b|\bTanggal Lahir\b", line):
@@ -147,7 +102,7 @@ def extract_evln(text):
             if match:
                 data["Passport Expiry"] = format_date(match.group(1))
         
-        elif re.search(r"(?i)\bDate of issue\b|\bTanggal Penerbitan\b", line):  # Diperbaiki untuk mencocokkan format dokumen
+        elif re.search(r"(?i)\bDate of issue\b|\bTanggal Penerbitan\b", line):
             match = re.search(r"(\d{2}/\d{2}/\d{4}|\d{2}-\d{2}-\d{4})", line)
             if match:
                 data["Date Issue"] = format_date(match.group(1))
@@ -476,8 +431,8 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
 
         # 3. Extract Nomor Telepon
         phone_patterns = [
-            r'Nomor\s+Telepon\s*:\s*([0-9\-\+\(\)\s]+)',
-            r'Telepon\s*:\s*([0-9\-\+\(\)\s]+)',
+            r'Nomor\s+Telepon\s*:\s*([0-9\-\+$$$$\s]+)',
+            r'Telepon\s*:\s*([0-9\-\+$$$$\s]+)',
         ]
         
         phone = None
@@ -485,7 +440,7 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
             phone = safe_extract(pattern, full_text)
             if phone:
                 # Clean phone number format
-                phone = re.sub(r'[^\d\-\+\(\)]', '', phone)
+                phone = re.sub(r'[^\d\-\+$$$$]', '', phone)
                 break
         
         result["No Telepon"] = phone
@@ -590,7 +545,7 @@ def extract_dkptka_info(full_text: str) -> Dict[str, Optional[str]]:
 
         # 11. Extract Lokasi Kerja
         location_patterns = [
-            r'Lokasi\s+Kerja\s*:\s*([A-Za-z\(\)\s]+?)(?=\n\s*\d+\.|\n\s*Jangka)',
+            r'Lokasi\s+Kerja\s*:\s*([A-Za-z$$$$\s]+?)(?=\n\s*\d+\.|\n\s*Jangka)',
             r'Lokasi\s+Kerja\s*:\s*([^\n]+)',
         ]
         
