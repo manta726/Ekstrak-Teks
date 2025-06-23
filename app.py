@@ -1,6 +1,6 @@
 """
 Main Streamlit Application for LDB (Ekstraksi Dokumen Imigrasi)
-Complete version using the existing file_handler.py
+Complete version with Clear All Files functionality
 """
 
 import streamlit as st
@@ -66,6 +66,10 @@ def initialize_app():
     """Initialize the Streamlit application"""
     st.set_page_config(**PAGE_CONFIG)
     
+    # Initialize session state for file management
+    if 'file_uploader_key' not in st.session_state:
+        st.session_state.file_uploader_key = 0
+    
     # Custom CSS
     st.markdown("""
     <style>
@@ -125,6 +129,21 @@ def initialize_app():
         margin: 0.5rem 0;
     }
     
+    .clear-button {
+        background: #dc3545;
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 500;
+        transition: background-color 0.2s;
+    }
+    
+    .clear-button:hover {
+        background: #c82333;
+    }
+    
     /* Custom table styling */
     .dataframe {
         border: 1px solid #dee2e6;
@@ -150,6 +169,11 @@ def initialize_app():
     }
     </style>
     """, unsafe_allow_html=True)
+
+def clear_uploaded_files():
+    """Clear all uploaded files by incrementing the file uploader key"""
+    st.session_state.file_uploader_key += 1
+    st.rerun()
 
 def render_sidebar(user, auth_manager):
     """Render sidebar with user info and navigation"""
@@ -205,7 +229,7 @@ def render_sidebar(user, auth_manager):
             auth_manager.logout()
 
 def render_extraction_page(user, db_manager):
-    """Render document extraction page using file_handler.py"""
+    """Render document extraction page with Clear All Files functionality"""
     st.markdown('<div class="main-header"><h1>📄 Ekstraksi Dokumen Imigrasi</h1></div>', unsafe_allow_html=True)
     
     if not FILE_HANDLER_ENABLED:
@@ -215,11 +239,13 @@ def render_extraction_page(user, db_manager):
     # File upload section
     st.subheader("📤 Upload Dokumen")
     
+    # File uploader with dynamic key for clearing
     uploaded_files = st.file_uploader(
         "Pilih file dokumen PDF (dapat memilih multiple files)",
         type=['pdf'],
         accept_multiple_files=True,
-        help="Maksimal ukuran file 50MB per file"
+        help="Maksimal ukuran file 50MB per file",
+        key=f"file_uploader_{st.session_state.file_uploader_key}"
     )
     
     if uploaded_files:
@@ -255,6 +281,15 @@ def render_extraction_page(user, db_manager):
                 Ukuran: {file_info['size_mb']} MB | Tipe: {file_info['type']}
             </div>
             """, unsafe_allow_html=True)
+        
+        # Clear All Files button
+        st.markdown("---")
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            if st.button("🗑️ Clear All Files", type="secondary", use_container_width=True, key="clear_all_files_btn"):
+                clear_uploaded_files()
+        
+        st.markdown("---")
         
         # Document type selection
         st.subheader("📋 Pilih Jenis Dokumen")
@@ -443,6 +478,11 @@ def render_extraction_page(user, db_manager):
                     # Clean up temporary files
                     cleanup_temp_directory(temp_dir)
                     
+                    # Auto-clear files after successful processing
+                    st.success("✅ Proses selesai! File akan dibersihkan otomatis dalam 3 detik...")
+                    time.sleep(3)
+                    clear_uploaded_files()
+                    
                 except Exception as e:
                     st.error(f"❌ Terjadi kesalahan: {str(e)}")
                     
@@ -458,6 +498,23 @@ def render_extraction_page(user, db_manager):
                                 processing_time=0,
                                 status="failed"
                             )
+    
+    else:
+        # Show help when no files uploaded
+        st.markdown("""
+        <div style="background: #e3f2fd; padding: 2rem; border-radius: 8px; text-align: center; margin: 2rem 0;">
+            <h3 style="color: #1976d2; margin-bottom: 1rem;">📤 Upload File untuk Memulai</h3>
+            <p style="color: #424242; margin-bottom: 1rem;">
+                Silakan upload file PDF dokumen imigrasi untuk memulai proses ekstraksi otomatis.
+            </p>
+            <ul style="text-align: left; color: #616161; max-width: 400px; margin: 0 auto;">
+                <li>Pastikan file dalam format PDF</li>
+                <li>Pilih jenis dokumen yang sesuai</li>
+                <li>Atur opsi penamaan file jika diperlukan</li>
+                <li>Maksimal ukuran file 50MB per file</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
 def render_settings_page(user, db_manager):
     """Render settings page"""
@@ -550,9 +607,18 @@ def main():
         
         # Simple extraction interface using file_handler
         if FILE_HANDLER_ENABLED:
-            uploaded_files = st.file_uploader("Upload PDF", type=['pdf'], accept_multiple_files=True)
+            uploaded_files = st.file_uploader(
+                "Upload PDF", 
+                type=['pdf'], 
+                accept_multiple_files=True,
+                key=f"fallback_uploader_{st.session_state.file_uploader_key}"
+            )
             
             if uploaded_files:
+                # Clear button for fallback mode
+                if st.button("🗑️ Clear Files"):
+                    clear_uploaded_files()
+                
                 doc_options = list(DOCUMENT_TYPES.keys()) if DOCUMENT_TYPES else ['SKTT', 'EVLN', 'ITAS', 'ITK']
                 doc_type = st.selectbox("Document Type", doc_options)
                 
