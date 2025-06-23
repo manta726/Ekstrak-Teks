@@ -1,12 +1,33 @@
+# Core Streamlit
 streamlit>=1.28.0
+
+# Data processing
 pandas>=1.5.0
+numpy>=1.24.0
+
+# Visualization
 plotly>=5.15.0
+matplotlib>=3.6.0
+
+# PDF processing
 PyPDF2>=3.0.0
+pdfplumber>=0.9.0
+
+# Document processing
 python-docx>=0.8.11
 openpyxl>=3.1.0
+
+# Image processing
 Pillow>=9.5.0
-sqlite3
-hashlib
-json
-datetime
-typing
+opencv-python>=4.8.0
+
+# Database (SQLite is built-in Python)
+# sqlite3 is included in Python standard library
+
+# Utilities
+python-dateutil>=2.8.0
+pytz>=2023.3
+
+# Optional: For enhanced PDF processing
+# pytesseract>=0.3.10  # OCR capabilities
+# pdf2image>=1.16.3    # PDF to image conversion
