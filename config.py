@@ -33,11 +33,36 @@ SECURITY_CONFIG = {
 
 # Document types
 DOCUMENT_TYPES = {
-    'SKTT': 'Surat Keterangan Tinggal Terbatas',
-    'EVLN': 'Exit Visa Luar Negeri',
-    'ITAS': 'Izin Tinggal Terbatas',
-    'ITK': 'Izin Tinggal Kunjungan',
-    'NOTIFICATION': 'Notifikasi Imigrasi'
+    'SKTT': {
+        'name': 'Surat Keterangan Tinggal Terbatas',
+        'description': 'Dokumen izin tinggal terbatas',
+        'fields': ['nama', 'nomor_paspor', 'kebangsaan', 'tanggal_lahir', 'masa_berlaku']
+    },
+    'EVLN': {
+        'name': 'Exit Visa Luar Negeri',
+        'description': 'Visa keluar untuk warga negara asing',
+        'fields': ['nama', 'nomor_paspor', 'tujuan', 'tanggal_keberangkatan', 'masa_berlaku']
+    },
+    'ITAS': {
+        'name': 'Izin Tinggal Terbatas',
+        'description': 'Izin tinggal terbatas untuk WNA',
+        'fields': ['nama', 'nomor_paspor', 'sponsor', 'jenis_kegiatan', 'masa_berlaku']
+    },
+    'ITK': {
+        'name': 'Izin Tinggal Kunjungan',
+        'description': 'Izin tinggal kunjungan',
+        'fields': ['nama', 'nomor_paspor', 'tujuan_kunjungan', 'lama_tinggal', 'masa_berlaku']
+    },
+    'NOTIFICATION': {
+        'name': 'Notifikasi Imigrasi',
+        'description': 'Notifikasi dari kantor imigrasi',
+        'fields': ['nomor_notifikasi', 'perihal', 'tanggal', 'status']
+    },
+    'DKPTKA': {
+        'name': 'Dana Kompensasi Penggunaan TKA',
+        'description': 'Dokumen pembayaran dana kompensasi TKA',
+        'fields': ['nama_perusahaan', 'nama_tka', 'nomor_paspor', 'jumlah_pembayaran']
+    }
 }
 
 # Logging configuration
